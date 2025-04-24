@@ -11,8 +11,6 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from environs import Env
 
 
-
-
 def start(update: Update, context: CallbackContext):
     reply_keyboard = [['Новый вопрос', 'Сдаться'], ['Узнать счет']]
     update.message.reply_text('Добро пожаловать в QUIZ игру от Devman',
@@ -20,11 +18,11 @@ def start(update: Update, context: CallbackContext):
 
 
 def handle_new_question_request(update: Update, context: CallbackContext):
-    quiz_dict = get_question_answer_for_quiz()
-    question = random.choice(list(quiz_dict.keys()))
-    answer = quiz_dict[question]
+    quiz_game = context.bot_data['quiz_game']
+    question = random.choice(list(quiz_game.keys()))
+    answer = quiz_game[question]
     hash_user_id = f'TG_user_id:{update.message.from_user.id}'
-    context.bot_data['bd'].hset(hash_user_id, mapping={
+    context.bot_data['db'].hset(hash_user_id, mapping={
         'question': question,
         'answer': answer
     })
@@ -38,7 +36,7 @@ def handle_solution_attempt(update: Update, context: CallbackContext):
     if message == 'новый вопрос':
         handle_new_question_request(update, context)
     else:
-        correct_answer = context.bot_data['bd'].hget(f'TG_user_id:{user_id}', 'answer')
+        correct_answer = context.bot_data['db'].hget(f'TG_user_id:{user_id}', 'answer')
         if check_answer(message, correct_answer):
             update.message.reply_text('Правильно! Жмите новый вопрос')
         else:
@@ -49,7 +47,7 @@ def handle_give_up(update: Update, context: CallbackContext):
     message = update.message.text.lower()
     user_id = update.effective_user.id
     if message == 'сдаться':
-        give_up_answer = context.bot_data['bd'].hget(f'TG_user_id:{user_id}', 'answer')
+        give_up_answer = context.bot_data['db'].hget(f'TG_user_id:{user_id}', 'answer')
         update.message.reply_text(f'Правильный ответ: {give_up_answer}')
         handle_new_question_request(update, context)
 
@@ -60,18 +58,19 @@ def main():
     Tg_bot_token = env.str("TELEGRAM_BOT_TOKEN")
     logger_bot_token = env.str("TG_LOG_TOKEN")
     logger_chat_id = env.str("TELEGRAM_CHAT_ID")
-    bd = redis.Redis(
+    db = redis.Redis(
         host=env.str("REDIS_HOST"),
         port=env.int("REDIS_PORT"),
         decode_responses=True,
-        username=env.str("REDIS_USERNAME","default"),
+        username=env.str("REDIS_USERNAME", "default"),
         password=env.str("REDIS_PASSWORD"),
     )
     logger_bot = telegram.Bot(token=logger_bot_token)
     logger = setup_tg_logger(logger_bot, logger_chat_id)
     updater = Updater(token=Tg_bot_token, use_context=True)
     dispatcher = updater.dispatcher
-    dispatcher.bot_data['bd'] = bd
+    dispatcher.bot_data['db'] = db
+    dispatcher.bot_data['quiz_game'] = get_question_answer_for_quiz()
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(ConversationHandler(
         entry_points=[MessageHandler(Filters.regex('^Новый вопрос$'), handle_new_question_request)],

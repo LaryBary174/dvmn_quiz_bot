@@ -5,16 +5,16 @@ def get_question_answer_for_quiz():
         content = file.read()
 
     sections = content.split('\n\n')
-    quiz_dict = {}
+    quiz_game = {}
 
     for i, section in enumerate(sections):
         if section.startswith('Вопрос'):
             _, question_text = section.split(':', 1)
             if i + 1 < len(sections) and sections[i + 1].startswith('Ответ:'):
                 _, answer_text = sections[i + 1].split(':', 1)
-                quiz_dict[question_text.strip()] = answer_text.strip()
+                quiz_game[question_text.strip()] = answer_text.strip()
 
-    return quiz_dict
+    return quiz_game
 
 
 def check_answer(user_answer, correct_answer):
