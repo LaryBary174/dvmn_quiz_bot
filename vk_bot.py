@@ -1,18 +1,19 @@
 import requests
 import time
 import telegram
+import redis
 import random
 import vk_api as vk
 from environs import Env
 
-from utils import get_dict_for_quiz, check_answer
-from redis_db import connect_to_redis
+from utils import get_question_answer_for_quiz, check_answer
+
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 from vk_api.utils import get_random_id
 from bot_for_logging import setup_tg_logger
 
-db = connect_to_redis()
+
 
 
 def handle_vk_event_start(event, vk_api):
@@ -29,12 +30,12 @@ def handle_vk_event_start(event, vk_api):
     )
 
 
-def handle_new_question_request(event, vk_api):
-    quiz_dict = get_dict_for_quiz()
+def handle_new_question_request(event, vk_api, bd):
+    quiz_dict = get_question_answer_for_quiz()
     question = random.choice(list(quiz_dict.keys()))
     answer = quiz_dict[question]
-    hash_user_id = f'User_id:{event.user_id}'
-    db.hset(hash_user_id, mapping={
+    hash_user_id = f'VK_user_id:{event.user_id}'
+    bd.hset(hash_user_id, mapping={
         'question': question,
         'answer': answer
     })
@@ -45,13 +46,13 @@ def handle_new_question_request(event, vk_api):
     )
 
 
-def handle_solution_attempt(event, vk_api):
+def handle_solution_attempt(event, vk_api, bd):
     message = event.text.lower()
     user_id = event.user_id
     if message == 'Новый вопрос':
         handle_new_question_request(event, vk_api)
     else:
-        correct_answer = db.hget(f'User_id:{user_id}', 'answer')
+        correct_answer = bd.hget(f'VK_user_id:{user_id}', 'answer')
         if check_answer(message, correct_answer):
             vk_api.messages.send(
                 user_id=user_id,
@@ -66,15 +67,15 @@ def handle_solution_attempt(event, vk_api):
             )
 
 
-def handle_give_up(event, vk_api):
+def handle_give_up(event, vk_api, bd):
     user_id = event.user_id
-    give_up_answer = db.hget(f'User_id:{user_id}', 'answer')
+    give_up_answer = bd.hget(f'VK_user_id:{user_id}', 'answer')
     vk_api.messages.send(
         user_id=user_id,
         message=f'Правильный ответ: {give_up_answer}',
         random_id=get_random_id()
     )
-    handle_new_question_request(event, vk_api)
+    handle_new_question_request(event, vk_api,bd)
 
 
 def main():
@@ -82,6 +83,13 @@ def main():
     env.read_env()
     logger_bot_token = env.str("TG_LOG_TOKEN")
     logger_chat_id = env.str("TELEGRAM_CHAT_ID")
+    bd = redis.Redis(
+        host=env.str("REDIS_HOST"),
+        port=env.int("REDIS_PORT"),
+        decode_responses=True,
+        username=env.str("REDIS_USERNAME","default"),
+        password=env.str("REDIS_PASSWORD"),
+    )
     logger_bot = telegram.Bot(token=logger_bot_token)
     logger = setup_tg_logger(logger_bot, logger_chat_id)
     vk_session = vk.VkApi(token=env.str("VK_GROUP_API_KEY"))
@@ -91,15 +99,25 @@ def main():
             longpoll = VkLongPoll(vk_session)
             logger.info('QUIZ бот VK запущен!')
             for event in longpoll.listen():
-                if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                    if event.text == 'Начать':
-                        handle_vk_event_start(event, vk_api)
-                    elif event.text == 'Новый вопрос':
-                        handle_new_question_request(event, vk_api)
-                    elif event.text == 'Сдаться':
-                        handle_give_up(event, vk_api)
-                    else:
-                        handle_solution_attempt(event, vk_api)
+                if not event.type == VkEventType.MESSAGE_NEW:
+                    continue
+                if not event.to_me:
+                    continue
+
+                if event.text == 'Начать':
+                    handle_vk_event_start(event, vk_api)
+                    continue
+
+                if event.text == 'Новый вопрос':
+                    handle_new_question_request(event, vk_api, bd)
+                    continue
+
+                if event.text == 'Сдаться':
+                    handle_give_up(event, vk_api, bd)
+                    continue
+
+                handle_solution_attempt(event, vk_api, bd)
+
         except requests.exceptions.ReadTimeout:
             logger.warning('Повтор запроса')
             continue

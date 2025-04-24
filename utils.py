@@ -1,6 +1,6 @@
 
 
-def get_dict_for_quiz():
+def get_question_answer_for_quiz():
     with open('questions/1vs1200.txt', 'r', encoding='KOI8-R') as file:
         content = file.read()
 
